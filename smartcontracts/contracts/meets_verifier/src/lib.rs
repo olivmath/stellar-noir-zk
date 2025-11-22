@@ -58,19 +58,19 @@ fn or_with_left_shift_bytes(lo: &[u8; 32], hi: &[u8; 32], shift_bytes: usize) ->
     out
 }
 
-fn parse_json_array_of_strings(s: &str) -> Result<StdVec<StdString>, ()> {
+fn parse_json_array_of_strings(s: &str) -> Result<StdVec<StdString>, Error> {
     let mut out: StdVec<StdString> = StdVec::new();
     let mut chars = s.chars().peekable();
     while let Some(&c) = chars.peek() {
         if c.is_whitespace() { chars.next(); } else { break; }
     }
-    if chars.next() != Some('[') { return Err(()); }
+    if chars.next() != Some('[') { return Err(Error::VkJsonFormatError); }
     loop {
         while let Some(&c) = chars.peek() {
             if c.is_whitespace() || c == ',' { chars.next(); } else { break; }
         }
         if let Some(&']') = chars.peek() { chars.next(); break; }
-        if chars.next() != Some('"') { return Err(()); }
+        if chars.next() != Some('"') { return Err(Error::VkJsonFormatError); }
         let mut buf = StdString::new();
         while let Some(c) = chars.next() {
             if c == '"' { break; }
@@ -130,9 +130,9 @@ fn find_first_g1_start(vk_fields: &[StdString], start_guess: usize, max_probe: u
     None
 }
 
-fn load_vk_from_json_no_serde(json_data: &str) -> Result<VerificationKey, ()> {
+fn load_vk_from_json_no_serde(json_data: &str) -> Result<VerificationKey, Error> {
     let vk_fields = parse_json_array_of_strings(json_data)?;
-    if vk_fields.len() < 7 { return Err(()); }
+    if vk_fields.len() < 7 { return Err(Error::VkJsonTooShort); }
     fn parse_u64_hex_lsb(s: &str) -> u64 {
         let h = s.trim_start_matches("0x");
         let n = core::cmp::min(16, h.len());
@@ -158,11 +158,11 @@ fn load_vk_from_json_no_serde(json_data: &str) -> Result<VerificationKey, ()> {
         while n > 1 { n >>= 1; lg += 1; }
         (h0, lg)
     } else {
-        let cs = 1u64.checked_shl(h0 as u32).ok_or(())?;
+        let cs = 1u64.checked_shl(h0 as u32).ok_or(Error::VkJsonFormatError)?;
         (cs, h0)
     };
-    let mut idx = find_first_g1_start(&vk_fields, 3, 64).ok_or(())?;
-    macro_rules! read_g1 { () => {{ let (pt, next) = try_read_g1(&vk_fields, idx).ok_or(())?; idx = next; pt }} }
+    let mut idx = find_first_g1_start(&vk_fields, 3, 64).ok_or(Error::VkG1ReadStartNotFound)?;
+    macro_rules! read_g1 { () => {{ let (pt, next) = try_read_g1(&vk_fields, idx).ok_or(Error::G1PointDecodeError)?; idx = next; pt }} }
     let qm = read_g1!();
     let qc = read_g1!();
     let ql = read_g1!();
@@ -237,6 +237,12 @@ pub enum Error {
     ProofParseError = 2,
     VerificationFailed = 3,
     VkNotSet = 4,
+    VkUtf8Error = 5,
+    VkJsonFormatError = 6,
+    VkJsonTooShort = 7,
+    VkG1ReadStartNotFound = 8,
+    G1PointDecodeError = 9,
+    ProofSplitError = 10,
 }
 
 #[contractimpl]
@@ -253,9 +259,10 @@ impl MeetsVerifierContract {
         out
     }
 
-    fn split_inputs_and_proof_bytes(packed: &[u8]) -> (StdVec<StdVec<u8>>, StdVec<u8>) {
-        if packed.len() < 4 { return (StdVec::new(), packed.to_vec()); }
+    fn split_inputs_and_proof_bytes(packed: &[u8]) -> Result<(StdVec<StdVec<u8>>, StdVec<u8>), Error> {
+        if packed.len() < 4 { return Err(Error::ProofSplitError); }
         let rest = &packed[4..];
+        if rest.len() % 32 != 0 { return Err(Error::ProofSplitError); }
         for &pf in &[456usize, 440usize] {
             let need = pf * 32;
             if rest.len() >= need {
@@ -264,11 +271,11 @@ impl MeetsVerifierContract {
                     let mut pub_inputs_bytes: StdVec<StdVec<u8>> = StdVec::with_capacity(pis_len / 32);
                     for chunk in rest[..pis_len].chunks(32) { pub_inputs_bytes.push(chunk.to_vec()); }
                     let proof_bytes = rest[pis_len..].to_vec();
-                    return (pub_inputs_bytes, proof_bytes);
+                    return Ok((pub_inputs_bytes, proof_bytes));
                 }
             }
         }
-        (StdVec::new(), rest.to_vec())
+        Err(Error::ProofSplitError)
     }
 
     pub fn verify_proof(env: Env, vk_json: Bytes, proof_blob: Bytes) -> Result<BytesN<32>, Error> {
@@ -276,10 +283,10 @@ impl MeetsVerifierContract {
         let proof_hash = Self::keccak32(&proof_vec);
         let proof_id_bytes: BytesN<32> = BytesN::from_array(&env, &proof_hash);
         let vk_vec: StdVec<u8> = vk_json.to_alloc_vec();
-        let vk_str = str::from_utf8(&vk_vec).map_err(|_| Error::VkParseError)?;
-        let vk = load_vk_from_json_no_serde(vk_str).map_err(|_| Error::VkParseError)?;
+        let vk_str = str::from_utf8(&vk_vec).map_err(|_| Error::VkUtf8Error)?;
+        let vk = load_vk_from_json_no_serde(vk_str)?;
         let verifier = UltraHonkVerifier::new_with_vk(vk);
-        let (pub_inputs_bytes, proof_bytes) = Self::split_inputs_and_proof_bytes(&proof_vec);
+        let (pub_inputs_bytes, proof_bytes) = Self::split_inputs_and_proof_bytes(&proof_vec)?;
         verifier.verify(&proof_bytes, &pub_inputs_bytes).map_err(|_| Error::VerificationFailed)?;
         env.storage().instance().set(&proof_id_bytes, &true);
         Ok(proof_id_bytes)

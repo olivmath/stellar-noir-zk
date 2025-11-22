@@ -8,12 +8,13 @@ const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
 
-const {
-  convertProof,
-  convertVerificationKey,
-} = require("olivmath-ultraplonk-zk-verify");
 const { UltraHonkBackend } = require("@aztec/bb.js");
-const { Horizon, Keypair, Networks, TransactionBuilder } = require("@stellar/stellar-sdk");
+const {
+  Horizon,
+  Keypair,
+  Networks,
+  TransactionBuilder,
+} = require("@stellar/stellar-sdk");
 let ContractClient;
 let ContractSpec;
 
@@ -159,9 +160,10 @@ initializeStellar();
 initializeZK();
 
 async function initUltraClient() {
-  const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || "Standalone Network ; February 2017";
+  const NETWORK_PASSPHRASE =
+    process.env.NETWORK_PASSPHRASE || "Standalone Network ; February 2017";
   const RPC_URL = process.env.STELLAR_RPC_URL || "http://localhost:8000/rpc";
-  const CONTRACT_ID = process.env.ULTRAHONK_CONTRACT_ID || "CCYOG5RLITFKOVERLBDXOHAZ6R65A7LLDP3NU7Y3X7A6D3RL5YDTB6KT";
+  const CONTRACT_ID = "CCYTABWKVB365PNHVX7JBK6V4DAC3PZ7I4T53DWJXEYVP43SZUW5OSMT";
   const mod = await import("@stellar/stellar-sdk/contract");
   ContractClient = mod.ContractClient || mod.Client;
   ContractSpec = mod.ContractSpec || mod.Spec;
@@ -176,7 +178,7 @@ async function initUltraClient() {
           "AAAAAAAAAE5WZXJpZnkgYW4gVWx0cmFIb25rIHByb29mOyBvbiBzdWNjZXNzIHN0b3JlIHByb29mX2lkICg9IGtlY2NhazI1Nihwcm9vZl9ibG9iKSkAAAAAAAx2ZXJpZnlfcHJvb2YAAAACAAAAAAAAAAd2a19qc29uAAAAAA4AAAAAAAAACnByb29mX2Jsb2IAAAAAAA4AAAABAAAD6QAAA+4AAAAgAAAAAw==",
           "AAAAAAAAAD1TZXQgdmVyaWZpY2F0aW9uIGtleSBKU09OIGFuZCBjYWNoZSBpdHMgaGFzaC4gUmV0dXJucyB2a19oYXNoAAAAAAAABnNldF92awAAAAAAAQAAAAAAAAAHdmtfanNvbgAAAAAOAAAAAQAAA+kAAAPuAAAAIAAAAAM=",
           "AAAAAAAAACNWZXJpZnkgdXNpbmcgdGhlIG9uLWNoYWluIHN0b3JlZCBWSwAAAAAbdmVyaWZ5X3Byb29mX3dpdGhfc3RvcmVkX3ZrAAAAAAEAAAAAAAAACnByb29mX2Jsb2IAAAAAAA4AAAABAAAD6QAAA+4AAAAgAAAAAw==",
-          "AAAAAAAAACtRdWVyeSBpZiBhIHByb29mX2lkIHdhcyBwcmV2aW91c2x5IHZlcmlmaWVkAAAAAAtpc192ZXJpZmllZAAAAAABAAAAAAAAAAhwcm9vZl9pZAAAA+4AAAAgAAAAAQAAAAE="
+          "AAAAAAAAACtRdWVyeSBpZiBhIHByb29mX2lkIHdhcyBwcmV2aW91c2x5IHZlcmlmaWVkAAAAAAtpc192ZXJpZmllZAAAAAABAAAAAAAAAAhwcm9vZl9pZAAAA+4AAAAgAAAAAQAAAAE=",
         ]),
         options
       );
@@ -187,9 +189,10 @@ async function initUltraClient() {
     contractId: CONTRACT_ID,
     rpcUrl: RPC_URL,
     allowHttp: true,
-    publicKey: undefined
+    publicKey: undefined,
   });
 }
+
 ultraClientReadyPromise = initUltraClient().catch((e) => {
   fail("Failed to initialize UltraClient", e);
 });
@@ -235,69 +238,23 @@ app.post("/api/verify", async (req, res) => {
       });
     }
 
-    header("3. convert data to array");
-    const toUint8 = (v) => {
-      if (v instanceof Uint8Array) return v;
-      if (Array.isArray(v)) return new Uint8Array(v);
-      if (typeof v === "string") {
-        const hex = v.startsWith("0x") ? v.slice(2) : v;
-        const bytes = new Uint8Array(hex.length / 2);
-        for (let i = 0; i < bytes.length; i++) {
-          bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-        }
-        return bytes;
-      }
-      return new Uint8Array(Object.values(v));
-    };
-    const proofUint8Array = toUint8(proof);
-    const vkUint8Array = toUint8(vk);
-    const publicInputsUint8Array = toUint8(publicInputs);
-    detail("publicInputs:", publicInputs);
-    detail("proof length:", proofUint8Array.length);
-    detail("vk length:", vkUint8Array.length);
-    const previewHex = (arr) =>
-      Array.from(arr.slice(0, 16))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-    detail("proof preview (first 16 bytes hex):", previewHex(proofUint8Array));
-    detail("vk preview (first 16 bytes hex):", previewHex(vkUint8Array));
-
-    const totalFields = proofUint8Array.length / 32 + publicInputsUint8Array.length / 32;
-    const headerBytes = new Uint8Array(4);
-    new DataView(headerBytes.buffer).setUint32(0, totalFields, false);
-    const proofBlob = new Uint8Array(headerBytes.length + publicInputsUint8Array.length + proofUint8Array.length);
-    proofBlob.set(headerBytes, 0);
-    proofBlob.set(publicInputsUint8Array, headerBytes.length);
-    proofBlob.set(proofUint8Array, headerBytes.length + publicInputsUint8Array.length);
-
-    let vkJsonInput;
-    try {
-      const convertedVk = convertVerificationKey(vkUint8Array);
-      vkJsonInput = typeof convertedVk === "string" ? convertedVk : JSON.stringify(convertedVk);
-    } catch (_) {
-      vkJsonInput = Buffer.from(vkUint8Array).toString("utf-8");
-    }
-    const vkBuffer = Buffer.from(vkJsonInput);
-    const proofBlobBuffer = Buffer.from(proofBlob);
-
-    ultraClient.options.publicKey = stellarAccount.publicKey;
-    const tx = await ultraClient.verify_proof({
-      vk_json: vkBuffer,
-      proof_blob: proofBlobBuffer,
-    });
-    const result = await tx.signAndSend({
-      signTransaction: async (xdr) => {
-        const passphrase = ultraClient.options.networkPassphrase;
-        const txObj = TransactionBuilder.fromXDR(xdr, passphrase);
-        txObj.sign(stellarAccount.keypair);
-        return { signedTxXdr: txObj.toXDR(), signerAddress: stellarAccount.publicKey };
-      },
-    });
-    const hash = result?.hash || result?.transactionHash || "";
-    const payload = { success: true, txHash: hash };
-    detail("Response:", payload);
-    return res.status(200).json(payload);
     // ###############################################################
+    // VERIFY PROOF
+    // ###############################################################
+
+    // ###############################################################
+    // MONT TX
+    // ###############################################################
+
+    // ###############################################################
+    // SIGN TX
+    // ###############################################################
+
+    // ###############################################################
+    // SEND TO CONTRACT
+    // ###############################################################
+
+    return res.status(200).json({message: "ok, good"});
   } catch (error) {
     fail("Error processing request:", error?.message || error);
     detail("Stack:", error?.stack);
