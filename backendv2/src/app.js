@@ -51,6 +51,22 @@ const fail = (msg, err) => {
   console.error(`${S.red}❌ ${msg}${S.reset}`, err ?? "");
 };
 
+// ZK circuit/backend initialization
+let zkBackend;
+function initializeZK() {
+  try {
+    header("ZK initialization");
+    const circuitPath = path.join(__dirname, "..", "public", "circuit.json");
+    const circuitRaw = fs.readFileSync(circuitPath, "utf-8");
+    const circuit = JSON.parse(circuitRaw);
+    zkBackend = new UltraHonkBackend(circuit.bytecode);
+    ok("ZK circuit loaded and backend initialized");
+  } catch (err) {
+    fail("Failed to initialize ZK circuit", err);
+    process.exit(1);
+  }
+}
+
 // Load Stellar account
 let stellarServer;
 let stellarAccount;
@@ -63,7 +79,9 @@ async function initializeStellar() {
     detail("Config:", { NETWORK, HORIZON });
 
     if (NETWORK !== "TESTNET") {
-      warn("Using non-TESTNET network. Ensure friendbot funding is available for your network.");
+      warn(
+        "Using non-TESTNET network. Ensure friendbot funding is available for your network."
+      );
     }
 
     stellarServer = new Horizon.Server(HORIZON, { allowHttp: true });
@@ -83,7 +101,12 @@ async function initializeStellar() {
 
     header("Stellar wallet initialized");
     detail("Address:", stellarAccount.publicKey);
-    detail("Secret (hidden):", `${stellarAccount.secret.slice(0,4)}****${stellarAccount.secret.slice(-4)}`);
+    detail(
+      "Secret (hidden):",
+      `${stellarAccount.secret.slice(0, 4)}****${stellarAccount.secret.slice(
+        -4
+      )}`
+    );
 
     if (NETWORK === "TESTNET") {
       const friendbotUrl = `https://friendbot.stellar.org/?addr=${stellarAccount.publicKey}`;
@@ -129,6 +152,7 @@ async function initializeStellar() {
 
 // Initialize Stellar wallet
 initializeStellar();
+initializeZK();
 
 // Hello World route
 app.get("/hello", (req, res) => {
@@ -171,27 +195,25 @@ app.post("/api/verify", async (req, res) => {
     detail("publicInputs:", publicInputs);
     detail("proof length:", proofUint8Array.length);
     detail("vk length:", vkUint8Array.length);
-    const previewHex = (arr) => Array.from(arr.slice(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const previewHex = (arr) =>
+      Array.from(arr.slice(0, 16))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
     detail("proof preview (first 16 bytes hex):", previewHex(proofUint8Array));
     detail("vk preview (first 16 bytes hex):", previewHex(vkUint8Array));
 
     header("4. skip local verification (using Stellar context)");
+    // const result = await zkBackend.verifyProof({
+    //   proof: proofUint8Array,
+    //   publicInputs: [publicInputs],
+    // });
+    // header("Result: ", result);
 
-    header("6. skip convert proof/vk for Stellar placeholder");
-
-    header("7. submit context to Stellar (placeholder)");
+    header("5. submit context to Stellar (placeholder)");
     // Example placeholder: return wallet info so caller knows context is Stellar
     const responsePayload = {
       message: "Proof verified locally. Stellar context active.",
       verified: true,
-      wallet: {
-        address: stellarAccount.publicKey,
-      },
-      debug: {
-        publicInputs,
-        proofLen: proofUint8Array.length,
-        vkLen: vkUint8Array.length,
-      },
     };
     detail("Response:", responsePayload);
     return res.status(200).json(responsePayload);

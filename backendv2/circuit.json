@@ -1,0 +1,29 @@
+{
+  "noir_version": "1.0.0-beta.15+83245db91dcf63420ef4bcbbd85b98f397fee663",
+  "hash": "12371592232752586805",
+  "abi": {
+    "parameters": [
+      {
+        "name": "birth_year",
+        "type": { "kind": "field" },
+        "visibility": "private"
+      },
+      {
+        "name": "current_year",
+        "type": { "kind": "field" },
+        "visibility": "public"
+      }
+    ],
+    "return_type": null,
+    "error_types": {}
+  },
+  "bytecode": "H4sIAAAAAAAA/7VWvU7DMBA+56dqGwaE2oUpI2wgHgEhMSFGFlQhGqEMFIhCJcY+AuIFeAoEj9ONKbAwFwJ3keO4sc+llqpz7/e7H9sR8LcCpNcX6ST6oVsK34PmIl6MdG98ks33n3dfT49eZrOz852D9+OHt9vHw/nX06eia1hC2OtqV2yjJOp50d5H2e9GoKBQeCXdVPwFSvB1FaTN78cChMfA4INbobnN52AKQMbUri33pLQrkAr8NQq5Am4bLLTCVQKG0CywyTIE+2HqAG9IXXLoaOxMlh3gDWPTf7u6j7iAZ9d6C7pgsNNdFDpuDDZR6li7SHsoq05MyVBvMZ8TSEnIdDN1wX6IeuBWKO6wyphMuXIG4d9uXgFjHTsGK9sa1j7SCGXVIJQM0yBwEjINQp/hNwK3QnEbImMyRRKaOLrnhoq/jXScZsllnk6TUTrJk6skG93d3+RpMsnpjBLtS14Zj7RH9pGbfe1+BAWL7LcKiDTQ2Ikl/z2Ftum2PeIbGhn5pC9YGS/lQZMud2OaZHkP+VTDoRSPUUNB9gM3e20PhtKe/FIcuY4x8Bad8lAjU3vrK3GJCn58sQyHrt/Uy4HEo3p8A2HyAmjCDAAA",
+  "debug_symbols": "nZLLroMgEIbfZdYsxBvVVzk5MajYkBA0FJo0xnfvOEgviyZNN/8PDN/AMKwwqj6cO22n+QLt3wq908boc2fmQXo9W1xdNwZp2nmnFC7BSxypRTplPbQ2GMPgKk2gTZdFWnIvHUYzBsqO6Jhw0kbto4096ewzKsqDbZoHXH1PFwfNM/EDzut0OhfFL/xJJL55P/8fZ3LQ7u25IYM2Z8BJc9KCtCStSGtSQXoibSKFMFbLebQ8WhENE2AlvIpWR8Mc5bZf3mnZG3U0fAp2eOm/vy0pkn7I4uZBjcGp/fIUw3Lu",
+  "file_map": {
+    "50": {
+      "source": "fn main(birth_year: Field, current_year: pub Field) {\n    let age: u16 = (current_year - birth_year) as u16;\n    // Check that age is between 18 and 100\n    assert(age >= 18);\n    assert(age <= 100);\n}\n\n#[test]\nfn test_main() {\n    main(1997, 2025);\n}\n\n#[test(should_fail)]\nfn test_fail_main() {\n    main(2020, 2025);\n}\n\n#[test(should_fail)]\nfn test_fail_2_main() {\n    main(3000, 2025);\n}",
+      "path": "/Users/olivmath/dev/stellar-noir/circuit/src/main.nr"
+    }
+  },
+  "expression_width": { "Bounded": { "width": 4 } }
+}
