@@ -161,7 +161,7 @@ initializeZK();
 async function initUltraClient() {
   const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || "Standalone Network ; February 2017";
   const RPC_URL = process.env.STELLAR_RPC_URL || "http://localhost:8000/rpc";
-  const CONTRACT_ID = process.env.ULTRAHONK_CONTRACT_ID || "CAXMCB6EYJ6Z6PHHC3MZ54IKHAZV5WSM2OAK4DSGM2E2M6DJG4FX5CPB";
+  const CONTRACT_ID = process.env.ULTRAHONK_CONTRACT_ID || "CCYOG5RLITFKOVERLBDXOHAZ6R65A7LLDP3NU7Y3X7A6D3RL5YDTB6KT";
   const mod = await import("@stellar/stellar-sdk/contract");
   ContractClient = mod.ContractClient || mod.Client;
   ContractSpec = mod.ContractSpec || mod.Spec;
@@ -270,7 +270,14 @@ app.post("/api/verify", async (req, res) => {
     proofBlob.set(publicInputsUint8Array, headerBytes.length);
     proofBlob.set(proofUint8Array, headerBytes.length + publicInputsUint8Array.length);
 
-    const vkBuffer = Buffer.from(vkUint8Array);
+    let vkJsonInput;
+    try {
+      const convertedVk = convertVerificationKey(vkUint8Array);
+      vkJsonInput = typeof convertedVk === "string" ? convertedVk : JSON.stringify(convertedVk);
+    } catch (_) {
+      vkJsonInput = Buffer.from(vkUint8Array).toString("utf-8");
+    }
+    const vkBuffer = Buffer.from(vkJsonInput);
     const proofBlobBuffer = Buffer.from(proofBlob);
 
     ultraClient.options.publicKey = stellarAccount.publicKey;
@@ -280,7 +287,7 @@ app.post("/api/verify", async (req, res) => {
     });
     const result = await tx.signAndSend({
       signTransaction: async (xdr) => {
-        const passphrase = guessClient.options.networkPassphrase;
+        const passphrase = ultraClient.options.networkPassphrase;
         const txObj = TransactionBuilder.fromXDR(xdr, passphrase);
         txObj.sign(stellarAccount.keypair);
         return { signedTxXdr: txObj.toXDR(), signerAddress: stellarAccount.publicKey };
