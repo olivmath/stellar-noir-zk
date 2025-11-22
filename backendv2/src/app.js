@@ -9,6 +9,8 @@ const fs = require("fs");
 const path = require("path");
 
 const { UltraHonkBackend } = require("@aztec/bb.js");
+const { NoirService } = require("./services/NoirService");
+const { StellarContractService } = require("./services/StellarContractService");
 const {
   Horizon,
   Keypair,
@@ -163,28 +165,11 @@ async function initUltraClient() {
   const NETWORK_PASSPHRASE =
     process.env.NETWORK_PASSPHRASE || "Standalone Network ; February 2017";
   const RPC_URL = process.env.STELLAR_RPC_URL || "http://localhost:8000/rpc";
-  const CONTRACT_ID = "CCYTABWKVB365PNHVX7JBK6V4DAC3PZ7I4T53DWJXEYVP43SZUW5OSMT";
-  const mod = await import("@stellar/stellar-sdk/contract");
-  ContractClient = mod.ContractClient || mod.Client;
-  ContractSpec = mod.ContractSpec || mod.Spec;
-  if (!ContractClient || !ContractSpec) {
-    throw new Error("Failed to load stellar-sdk/contract module exports");
-  }
-  class UltraClient extends ContractClient {
-    constructor(options) {
-      super(
-        new ContractSpec([
-          "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAABAAAAAAAAAAMVmtQYXJzZUVycm9yAAAAAQAAAAAAAAAPUHJvb2ZQYXJzZUVycm9yAAAAAAIAAAAAAAAAElZlcmlmaWNhdGlvbkZhaWxlZAAAAAAAAwAAAAAAAAAIVmtOb3RTZXQAAAAE",
-          "AAAAAAAAAE5WZXJpZnkgYW4gVWx0cmFIb25rIHByb29mOyBvbiBzdWNjZXNzIHN0b3JlIHByb29mX2lkICg9IGtlY2NhazI1Nihwcm9vZl9ibG9iKSkAAAAAAAx2ZXJpZnlfcHJvb2YAAAACAAAAAAAAAAd2a19qc29uAAAAAA4AAAAAAAAACnByb29mX2Jsb2IAAAAAAA4AAAABAAAD6QAAA+4AAAAgAAAAAw==",
-          "AAAAAAAAAD1TZXQgdmVyaWZpY2F0aW9uIGtleSBKU09OIGFuZCBjYWNoZSBpdHMgaGFzaC4gUmV0dXJucyB2a19oYXNoAAAAAAAABnNldF92awAAAAAAAQAAAAAAAAAHdmtfanNvbgAAAAAOAAAAAQAAA+kAAAPuAAAAIAAAAAM=",
-          "AAAAAAAAACNWZXJpZnkgdXNpbmcgdGhlIG9uLWNoYWluIHN0b3JlZCBWSwAAAAAbdmVyaWZ5X3Byb29mX3dpdGhfc3RvcmVkX3ZrAAAAAAEAAAAAAAAACnByb29mX2Jsb2IAAAAAAA4AAAABAAAD6QAAA+4AAAAgAAAAAw==",
-          "AAAAAAAAACtRdWVyeSBpZiBhIHByb29mX2lkIHdhcyBwcmV2aW91c2x5IHZlcmlmaWVkAAAAAAtpc192ZXJpZmllZAAAAAABAAAAAAAAAAhwcm9vZl9pZAAAA+4AAAAgAAAAAQAAAAE=",
-        ]),
-        options
-      );
-    }
-  }
-  ultraClient = new UltraClient({
+  const CONTRACT_ID = process.env.ULTRAHONK_CONTRACT_ID || "CCYOG5RLITFKOVERLBDXOHAZ6R65A7LLDP3NU7Y3X7A6D3RL5YDTB6KT";
+  const { Client: VerifierClient } = await import(
+    path.join(__dirname, "verifier-lib", "dist", "index.js")
+  );
+  ultraClient = new VerifierClient({
     networkPassphrase: NETWORK_PASSPHRASE,
     contractId: CONTRACT_ID,
     rpcUrl: RPC_URL,
@@ -241,20 +226,61 @@ app.post("/api/verify", async (req, res) => {
     // ###############################################################
     // VERIFY PROOF
     // ###############################################################
+    const toUint8 = (v) => {
+      if (v instanceof Uint8Array) return v;
+      if (Buffer.isBuffer(v)) return new Uint8Array(v);
+      if (Array.isArray(v)) return Uint8Array.from(v);
+      if (typeof v === "string") {
+        const s = v.trim();
+        const isHex = /^0x[0-9a-fA-F]+$/.test(s) || /^[0-9a-fA-F]+$/.test(s);
+        if (isHex) {
+          const hex = s.startsWith("0x") ? s.slice(2) : s;
+          const out = new Uint8Array(hex.length / 2);
+          for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+          return out;
+        }
+        try {
+          const b = Buffer.from(s, "base64");
+          return new Uint8Array(b);
+        } catch (_) {}
+      }
+      if (v && typeof v === "object" && "data" in v && Array.isArray(v.data)) return Uint8Array.from(v.data);
+      throw new Error("Unsupported input format");
+    };
+
+    const proofBytes = toUint8(proof);
+    const pubInputsBytes = toUint8(publicInputs);
+    const vkBytes = toUint8(vk);
+
+    const noirSvc = new NoirService();
+    const { proofBlob } = noirSvc.buildProofBlob(pubInputsBytes, proofBytes);
 
     // ###############################################################
     // MONT TX
     // ###############################################################
+    ultraClient.options.publicKey = stellarAccount.publicKey;
+    const tx = await ultraClient.verify_proof({
+      vk_json: Buffer.from(vkBytes),
+      proof_blob: StellarContractService.toBuffer(proofBlob),
+    });
 
     // ###############################################################
     // SIGN TX
     // ###############################################################
+    const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || "Standalone Network ; February 2017";
+    const walletSignTransaction = async (xdr) => {
+      const txObj = TransactionBuilder.fromXDR(xdr, NETWORK_PASSPHRASE);
+      txObj.sign(stellarAccount.keypair);
+      return { signedTxXdr: txObj.toXDR(), signerAddress: stellarAccount.publicKey };
+    };
 
     // ###############################################################
     // SEND TO CONTRACT
     // ###############################################################
-
-    return res.status(200).json({message: "ok, good"});
+    const result = await tx.signAndSend({ signTransaction: walletSignTransaction });
+    const cpu = StellarContractService.extractCpuInstructions(tx);
+    const txData = StellarContractService.extractTransactionData(result);
+    return res.status(200).json({ success: true, txHash: txData.txHash, fee: txData.fee, cpuInstructions: cpu });
   } catch (error) {
     fail("Error processing request:", error?.message || error);
     detail("Stack:", error?.stack);
