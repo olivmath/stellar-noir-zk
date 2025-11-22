@@ -13,7 +13,9 @@ const {
   convertVerificationKey,
 } = require("olivmath-ultraplonk-zk-verify");
 const { UltraHonkBackend } = require("@aztec/bb.js");
-const { Horizon, Keypair, Networks } = require("@stellar/stellar-sdk");
+const { Horizon, Keypair, Networks, TransactionBuilder } = require("@stellar/stellar-sdk");
+let ContractClient;
+let ContractSpec;
 
 dotenv.config();
 
@@ -70,6 +72,8 @@ function initializeZK() {
 // Load Stellar account
 let stellarServer;
 let stellarAccount;
+let ultraClient;
+let ultraClientReadyPromise;
 
 async function initializeStellar() {
   try {
@@ -154,6 +158,42 @@ async function initializeStellar() {
 initializeStellar();
 initializeZK();
 
+async function initUltraClient() {
+  const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || "Standalone Network ; February 2017";
+  const RPC_URL = process.env.STELLAR_RPC_URL || "http://localhost:8000/rpc";
+  const CONTRACT_ID = process.env.ULTRAHONK_CONTRACT_ID || "CAXMCB6EYJ6Z6PHHC3MZ54IKHAZV5WSM2OAK4DSGM2E2M6DJG4FX5CPB";
+  const mod = await import("@stellar/stellar-sdk/contract");
+  ContractClient = mod.ContractClient || mod.Client;
+  ContractSpec = mod.ContractSpec || mod.Spec;
+  if (!ContractClient || !ContractSpec) {
+    throw new Error("Failed to load stellar-sdk/contract module exports");
+  }
+  class UltraClient extends ContractClient {
+    constructor(options) {
+      super(
+        new ContractSpec([
+          "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAABAAAAAAAAAAMVmtQYXJzZUVycm9yAAAAAQAAAAAAAAAPUHJvb2ZQYXJzZUVycm9yAAAAAAIAAAAAAAAAElZlcmlmaWNhdGlvbkZhaWxlZAAAAAAAAwAAAAAAAAAIVmtOb3RTZXQAAAAE",
+          "AAAAAAAAAE5WZXJpZnkgYW4gVWx0cmFIb25rIHByb29mOyBvbiBzdWNjZXNzIHN0b3JlIHByb29mX2lkICg9IGtlY2NhazI1Nihwcm9vZl9ibG9iKSkAAAAAAAx2ZXJpZnlfcHJvb2YAAAACAAAAAAAAAAd2a19qc29uAAAAAA4AAAAAAAAACnByb29mX2Jsb2IAAAAAAA4AAAABAAAD6QAAA+4AAAAgAAAAAw==",
+          "AAAAAAAAAD1TZXQgdmVyaWZpY2F0aW9uIGtleSBKU09OIGFuZCBjYWNoZSBpdHMgaGFzaC4gUmV0dXJucyB2a19oYXNoAAAAAAAABnNldF92awAAAAAAAQAAAAAAAAAHdmtfanNvbgAAAAAOAAAAAQAAA+kAAAPuAAAAIAAAAAM=",
+          "AAAAAAAAACNWZXJpZnkgdXNpbmcgdGhlIG9uLWNoYWluIHN0b3JlZCBWSwAAAAAbdmVyaWZ5X3Byb29mX3dpdGhfc3RvcmVkX3ZrAAAAAAEAAAAAAAAACnByb29mX2Jsb2IAAAAAAA4AAAABAAAD6QAAA+4AAAAgAAAAAw==",
+          "AAAAAAAAACtRdWVyeSBpZiBhIHByb29mX2lkIHdhcyBwcmV2aW91c2x5IHZlcmlmaWVkAAAAAAtpc192ZXJpZmllZAAAAAABAAAAAAAAAAhwcm9vZl9pZAAAA+4AAAAgAAAAAQAAAAE="
+        ]),
+        options
+      );
+    }
+  }
+  ultraClient = new UltraClient({
+    networkPassphrase: NETWORK_PASSPHRASE,
+    contractId: CONTRACT_ID,
+    rpcUrl: RPC_URL,
+    allowHttp: true,
+    publicKey: undefined
+  });
+}
+ultraClientReadyPromise = initUltraClient().catch((e) => {
+  fail("Failed to initialize UltraClient", e);
+});
+
 // Hello World route
 app.get("/hello", (req, res) => {
   res.send(`
@@ -177,6 +217,12 @@ app.options("/api/verify", cors(), (req, res) => {
 // Verify proof route
 app.post("/api/verify", async (req, res) => {
   try {
+    if (ultraClientReadyPromise) {
+      await ultraClientReadyPromise;
+    }
+    if (!ultraClient) {
+      throw new Error("Contract client not initialized");
+    }
     header("1. receive request");
     detail("Headers:", req.headers);
     const { proof, publicInputs, vk } = req.body;
@@ -190,8 +236,22 @@ app.post("/api/verify", async (req, res) => {
     }
 
     header("3. convert data to array");
-    const proofUint8Array = new Uint8Array(Object.values(proof));
-    const vkUint8Array = new Uint8Array(Object.values(vk));
+    const toUint8 = (v) => {
+      if (v instanceof Uint8Array) return v;
+      if (Array.isArray(v)) return new Uint8Array(v);
+      if (typeof v === "string") {
+        const hex = v.startsWith("0x") ? v.slice(2) : v;
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+          bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        }
+        return bytes;
+      }
+      return new Uint8Array(Object.values(v));
+    };
+    const proofUint8Array = toUint8(proof);
+    const vkUint8Array = toUint8(vk);
+    const publicInputsUint8Array = toUint8(publicInputs);
     detail("publicInputs:", publicInputs);
     detail("proof length:", proofUint8Array.length);
     detail("vk length:", vkUint8Array.length);
@@ -202,21 +262,34 @@ app.post("/api/verify", async (req, res) => {
     detail("proof preview (first 16 bytes hex):", previewHex(proofUint8Array));
     detail("vk preview (first 16 bytes hex):", previewHex(vkUint8Array));
 
-    header("4. skip local verification (using Stellar context)");
-    // const result = await zkBackend.verifyProof({
-    //   proof: proofUint8Array,
-    //   publicInputs: [publicInputs],
-    // });
-    // header("Result: ", result);
+    const totalFields = proofUint8Array.length / 32 + publicInputsUint8Array.length / 32;
+    const headerBytes = new Uint8Array(4);
+    new DataView(headerBytes.buffer).setUint32(0, totalFields, false);
+    const proofBlob = new Uint8Array(headerBytes.length + publicInputsUint8Array.length + proofUint8Array.length);
+    proofBlob.set(headerBytes, 0);
+    proofBlob.set(publicInputsUint8Array, headerBytes.length);
+    proofBlob.set(proofUint8Array, headerBytes.length + publicInputsUint8Array.length);
 
-    header("5. submit context to Stellar (placeholder)");
-    // Example placeholder: return wallet info so caller knows context is Stellar
-    const responsePayload = {
-      message: "Proof verified locally. Stellar context active.",
-      verified: true,
-    };
-    detail("Response:", responsePayload);
-    return res.status(200).json(responsePayload);
+    const vkBuffer = Buffer.from(vkUint8Array);
+    const proofBlobBuffer = Buffer.from(proofBlob);
+
+    ultraClient.options.publicKey = stellarAccount.publicKey;
+    const tx = await ultraClient.verify_proof({
+      vk_json: vkBuffer,
+      proof_blob: proofBlobBuffer,
+    });
+    const result = await tx.signAndSend({
+      signTransaction: async (xdr) => {
+        const passphrase = guessClient.options.networkPassphrase;
+        const txObj = TransactionBuilder.fromXDR(xdr, passphrase);
+        txObj.sign(stellarAccount.keypair);
+        return { signedTxXdr: txObj.toXDR(), signerAddress: stellarAccount.publicKey };
+      },
+    });
+    const hash = result?.hash || result?.transactionHash || "";
+    const payload = { success: true, txHash: hash };
+    detail("Response:", payload);
+    return res.status(200).json(payload);
     // ###############################################################
   } catch (error) {
     fail("Error processing request:", error?.message || error);

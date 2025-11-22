@@ -4,8 +4,21 @@ dotenv.config();
 
 const app = require('./app.js');
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Servidor rodando em http://0.0.0.0:${PORT}`);
-});
+function start(port) {
+  const server = app.listen(port, "0.0.0.0", () => {
+    console.log(`Servidor rodando em http://0.0.0.0:${port}`);
+  });
+  server.on("error", (err) => {
+    if (err && err.code === "EADDRINUSE") {
+      const next = port + 1;
+      console.log(`Porta ${port} em uso, tentando ${next}...`);
+      start(next);
+    } else {
+      throw err;
+    }
+  });
+}
+
+start(PORT);
