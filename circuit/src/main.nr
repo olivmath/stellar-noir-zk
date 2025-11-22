@@ -1,21 +1,21 @@
-fn split_yyyymmdd(yyyymmdd: u32) -> (u32, u32, u32) {
-    let year = yyyymmdd / 10000;
-    let md = yyyymmdd % 10000;
-    let month = md / 100;
-    let day = md % 100;
-    (year, month, day)
+fn main(birth_year: Field, current_year: pub Field) {
+    let age: u16 = (current_year - birth_year) as u16;
+    // Check that age is between 18 and 100
+    assert(age >= 18);
+    assert(age <= 100);
 }
 
-fn is_adult(birth: u32, today: u32) -> bool {
-    let (by, bm, bd) = split_yyyymmdd(birth);
-    let (ty, tm, td) = split_yyyymmdd(today);
-    let dy = ty - by;
-    let gt18 = dy > 18;
-    let eq18 = dy == 18;
-    let month_ok = if tm > bm { true } else { if tm == bm { td >= bd } else { false } };
-    if gt18 { true } else { if eq18 { month_ok } else { false } }
+#[test]
+fn test_main() {
+    main(1997, 2025);
 }
 
-fn main(birth: u32, today: u32) -> pub bool {
-    is_adult(birth, today)
+#[test(should_fail)]
+fn test_fail_main() {
+    main(2020, 2025);
+}
+
+#[test(should_fail)]
+fn test_fail_2_main() {
+    main(3000, 2025);
 }
