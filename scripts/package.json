@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@noir-lang/noir_js": "1.0.0-beta.15",
-    "@noir-lang/barretenberg": "2.22.0",
-    "@noir-lang/backend_barretenberg": "0.36.0"
+    "@aztec/bb.js": "3.0.0-nightly.20251104",
+    "@stellar/stellar-sdk": "12.3.0"
   }
 }

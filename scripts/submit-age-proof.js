@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Noir } from '@noir-lang/noir_js';
-import { BarretenbergBackend } from '@noir-lang/backend_barretenberg';
+import { UltraHonkBackend } from '@aztec/bb.js';
+import StellarSdk from '@stellar/stellar-sdk';
 import child_process from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -31,6 +32,12 @@ function run(cmd, cwd) {
   if (res.status !== 0) throw new Error(`Falha ao executar: ${cmd}`);
 }
 
+function execCapture(cmd, cwd) {
+  const res = child_process.spawnSync(cmd, { shell: true, cwd, stdio: ['ignore', 'pipe', 'inherit'] });
+  if (res.status !== 0) throw new Error(`Falha ao executar: ${cmd}`);
+  return res.stdout.toString();
+}
+
 async function main() {
   const dobArg = process.argv[2];
   if (!dobArg) {
@@ -42,11 +49,11 @@ async function main() {
   const birth = parseDob(dobArg);
   const today = toYyyymmdd(new Date());
 
-  const noirDir = path.join(__dirname, '..', 'noir', 'age_check');
+  const noirDir = path.join(__dirname, '..', 'circuit');
   const programPath = path.join(noirDir, 'target', 'age_check.json');
   if (!fs.existsSync(programPath)) {
     console.error('Programa Noir compilado não encontrado em', programPath);
-    console.error('Compile uma vez com: nargo check (ou nargo compile) dentro de noir/age_check');
+    console.error('Compile uma vez com: nargo check (ou nargo compile) dentro de circuit');
     process.exit(1);
   }
   const program = JSON.parse(fs.readFileSync(programPath, 'utf-8'));
@@ -56,7 +63,7 @@ async function main() {
   const { witness, returnValue } = await noir.execute(inputs);
   let proof, publicInputs;
   try {
-    const backend = new BarretenbergBackend(program);
+    const backend = new UltraHonkBackend(program.bytecode);
     ({ proof, publicInputs } = await backend.generateProof(witness));
   } catch (e) {
     console.error('Falha ao gerar prova com Barretenberg:', e.message || e);
@@ -78,12 +85,51 @@ async function main() {
     process.exit(0);
   }
 
-  try {
-    const cmd = `soroban contract invoke --id ${contractId} --fn verify -- --proof ${Buffer.from(proof).toString('hex')} --public ${Buffer.from(publicFlattened).toString('hex')}`;
-    run(cmd, process.cwd());
-  } catch (e) {
-    console.error(e.message);
+  const npmBin = execCapture('npm bin', __dirname).trim();
+  const bb = path.join(npmBin, 'bb.js');
+  const vkJson = execCapture(`${bb} vk_as_fields -b ${programPath} -o -`, path.join(__dirname, '..'));
+
+  const countBuf = Buffer.allocUnsafe(4);
+  countBuf.writeUInt32BE(publicInputs.length);
+  const proofBlob = Buffer.concat([countBuf, publicFlattened, Buffer.from(proof)]);
+
+  const { Keypair, SorobanRpc, Contract, TransactionBuilder, BASE_FEE, Networks, nativeToScVal } = StellarSdk;
+  const server = new SorobanRpc.Server('http://localhost:8000/rpc');
+  const networkPassphrase = Networks.STANDALONE;
+  const secret = process.env.SOROBAN_SECRET || '';
+  let kp;
+  if (secret) {
+    kp = Keypair.fromSecret(secret);
+  } else {
+    kp = Keypair.random();
+    await fetch(`http://localhost:8000/friendbot?addr=${kp.publicKey()}`);
+  }
+
+  const contract = new Contract(contractId);
+  const account = await server.getAccount(kp.publicKey());
+  let tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
+    .addOperation(contract.call('verify_proof', nativeToScVal(Buffer.from(vkJson, 'utf8')), nativeToScVal(proofBlob)))
+    .setTimeout(60)
+    .build();
+  tx = await server.prepareTransaction(tx);
+  tx.sign(kp);
+  const send = await server.sendTransaction(tx);
+  if (send.errorResultXdr) {
+    console.error('Falha ao enviar transação:', send.errorResultXdr);
     process.exit(1);
+  }
+  let status = await server.getTransaction(send.hash);
+  while (status.status === SorobanRpc.GetTransactionStatus.NOT_FOUND) {
+    await new Promise(r => setTimeout(r, 1000));
+    status = await server.getTransaction(send.hash);
+  }
+  if (status.status !== SorobanRpc.GetTransactionStatus.SUCCESS) {
+    console.error('Transação não confirmada:', status);
+    process.exit(1);
+  }
+  console.log('Transação confirmada:', send.hash);
+  if (status.resultXdr) {
+    console.log('Resultado (XDR base64):', status.resultXdr);
   }
 }
 
