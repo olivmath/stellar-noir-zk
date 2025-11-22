@@ -1,0 +1,29 @@
+{
+  "name": "zk-backend",
+  "version": "0.10.0",
+  "description": "Backend ZkProof18+",
+  "main": "app.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "NODE_ENV=development nodemon src/server.js",
+    "t": "vitest",
+    "tw": "vitest --watch"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "0.72.1",
+    "@noir-lang/noir_js": "1.0.0-beta.2",
+    "@stellar/stellar-sdk": "^14.3.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.1",
+    "express": "^4.19.2",
+    "helmet": "^7.0.0",
+    "morgan": "^1.10.0",
+    "olivmath-ultraplonk-zk-verify": "0.2.0",
+    "zkverifyjs": "^0.12.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3",
+    "supertest": "^7.1.4",
+    "vitest": "^3.2.4"
+  }
+}
