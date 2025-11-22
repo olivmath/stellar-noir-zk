@@ -1,0 +1,7 @@
+[package]
+name = "age_check"
+type = "bin"
+authors = ["stellar-noir"]
+version = "0.1.0"
+
+[dependencies]
